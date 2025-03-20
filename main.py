@@ -115,10 +115,6 @@ def main():
             # add magnet link to anime_info subtitle_group
             anime_info["sub_groups"][idx]["episodes"] = all_episodes
         # Create the final JSON structure
-        result = {
-            "anime": [anime_info]
-        }
-        
         # Create output directory if it doesn't exist
         output_dir = os.path.join(os.getcwd(), "Generated", "Products")
         os.makedirs(output_dir, exist_ok=True)
@@ -126,13 +122,13 @@ def main():
         # Write to JSON file
         output_file = os.path.join(output_dir, "anime_info.json")
         with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+            json.dump(anime_info, f, ensure_ascii=False, indent=2)
         
         print(f"JSON file saved to: {os.path.abspath(output_file)}")
         
         # Also print the JSON to console
         print("\nJSON Output:")
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(anime_info, ensure_ascii=False, indent=2))
         
     except requests.RequestException as e:
         print(f"获取页面内容时发生错误: {e}")
