@@ -1,143 +1,56 @@
-import re
-import os
-import json
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
-import requests
-from bs4 import XMLParsedAsHTMLWarning
-import warnings
+import qbittorrentapi
 
-# 忽略XML解析警告
-warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+# instantiate a Client using the appropriate WebUI configuration
+conn_info = dict(
+    host="127.0.0.1",
+    port=8082,
+    username="admin",
+    password="qwe123",
+)
+qbt_client = qbittorrentapi.Client(**conn_info)
 
-def extract_anime_info(html_content, rss_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
-    rss_soup = BeautifulSoup(rss_content, 'html.parser')  # 使用html.parser替代xml
-    
-    anime_info = {}
-    
-    # Extract anime name from RSS page
-    rss_title = rss_soup.find('title')
-    if rss_title:
-        # 标题格式为 "Mikan Project - 番剧名"，我们需要提取番剧名部分
-        title_text = rss_title.text.strip()
-        anime_name = title_text.split(' - ')[-1] if ' - ' in title_text else title_text
-        anime_info["name"] = anime_name
-    
-    # Extract anime ID from subscribe button
-    subscribe_button = soup.find('button', class_='btn logmod-submit js-subscribe_bangumi_page')
-    if subscribe_button and subscribe_button.get('data-bangumiid'):
-        anime_info["id"] = int(subscribe_button['data-bangumiid'])
-    else:
-        # Fallback: try to extract from the current page URL
-        anime_id_match = re.search(r'/Bangumi/(\d+)', str(soup))
-        if anime_id_match:
-            anime_info["id"] = int(anime_id_match.group(1))
-    
-    # Extract subtitle groups
-    sub_groups = []
-    # 尝试多种可能的选择器
-    group_links = soup.find_all('a', class_=lambda x: x and ('subgroup-name' in x or 'subgroup-' in x))
-    
-    for group_link in group_links:
-        # 尝试从class属性中提取group_id
-        group_id_match = re.search(r'subgroup-(\d+)', ','.join(group_link.get('class', [''])))
-        if not group_id_match:
-            # 尝试从href属性中提取
-            group_id_match = re.search(r'/PublishGroup/(\d+)', group_link.get('href', ''))
-        
-        if group_id_match:
-            group_id = int(group_id_match.group(1))
-            group_name = group_link.text.strip()
-            if group_name and {"group_name": group_name, "group_id": group_id} not in sub_groups:
-                sub_groups.append({"group_name": group_name, "group_id": group_id})
-    
-    anime_info["sub_groups"] = sub_groups
-    
-    return anime_info
+# the Client will automatically acquire/maintain a logged-in state
+# in line with any request. therefore, this is not strictly necessary;
+# however, you may want to test the provided login credentials.
+try:
+    qbt_client.auth_log_in()
+except qbittorrentapi.LoginFailed as e:
+    print(e)
 
-def main():
-    # 设置目标URL
-    base_url = "https://mikanani.me/Home/Bangumi/3463"  # 这里使用示例URL，实际使用时可以根据需要修改
-    
-    try:
-        # 发送HTTP请求获取页面内容
-        response = requests.get(base_url)
-        response.raise_for_status()  # 检查请求是否成功
-        
-        # 获取HTML内容
-        html_content = response.text
-        
-        # 从页面中提取番剧ID
-        soup = BeautifulSoup(html_content, 'html.parser')
-        subscribe_button = soup.find('button', class_='btn logmod-submit js-subscribe_bangumi_page')
-        if not subscribe_button or not subscribe_button.get('data-bangumiid'):
-            raise Exception("无法获取番剧ID")
-        
-        bangumi_id = subscribe_button['data-bangumiid']
-        
-        # 获取RSS页面内容
-        rss_url = f"https://mikanani.me/RSS/Bangumi?bangumiId={bangumi_id}"
-        rss_response = requests.get(rss_url)
-        rss_response.raise_for_status()
-        rss_content = rss_response.text
-        
-        anime_info = extract_anime_info(html_content, rss_content)
-        # 获取每个字幕组的剧集列表
-        sub_groups = anime_info["sub_groups"]
-        # 获取每个字幕组的剧集列表
-        all_episodes = []
-        for group in sub_groups:
-            print(group)
-            episode_table_url = f"https://mikanani.me/Home/ExpandEpisodeTable?bangumiId={bangumi_id}&subtitleGroupId={group['group_id']}&take=100"
-            episode_response = requests.get(episode_table_url)
-            episode_response.raise_for_status()
-            episode_content = episode_response.text
-            
-            # 解析剧集列表
-            episode_soup = BeautifulSoup(episode_content, 'html.parser')
-            episode_rows = episode_soup.find_all('tr')[1:]  # Skip header row
-            
-            for row in episode_rows:
-                cols = row.find_all('td')
-                if len(cols) >= 4:
-                    episode_link = cols[0].find('a')
-                    if episode_link:
-                        episode_info = {
-                            "title": episode_link.text.strip(),
-                            "size": cols[1].text.strip(),
-                            "update_time": cols[2].text.strip(),
-                            "magnet_link": cols[0].find_all('a')[1]['data-clipboard-text'] if len(cols[0].find_all('a')) > 1 else None,
-                            "subtitle_group": group['group_name']
-                        }
-                        all_episodes.append(episode_info)
-        
-        anime_info["episodes"] = all_episodes
-        
-        # Create the final JSON structure
-        result = {
-            "anime": [anime_info]
-        }
-        
-        # Create output directory if it doesn't exist
-        output_dir = os.path.join(os.getcwd(), "Generated", "Products")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Write to JSON file
-        output_file = os.path.join(output_dir, "anime_info.json")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-        
-        print(f"JSON file saved to: {os.path.abspath(output_file)}")
-        
-        # Also print the JSON to console
-        print("\nJSON Output:")
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        
-    except requests.RequestException as e:
-        print(f"获取页面内容时发生错误: {e}")
-    except Exception as e:
-        print(f"处理过程中发生错误: {e}")
+# if the Client will not be long-lived or many Clients may be created
+# in a relatively short amount of time, be sure to log out:
+qbt_client.auth_log_out()
 
-if __name__ == "__main__":
-    main()
+# or use a context manager:
+with qbittorrentapi.Client(**conn_info) as qbt_client:
+    #if qbt_client.torrents_add(urls="...") != "Ok.":
+    #    raise Exception("Failed to add torrent.")
+    u = "magnet:?xt=urn:btih:f442fe3bcb195f920bf2a0c7e93fea22e39d4d39&tr=http%3a%2f%2ft.nyaatracker.com%2fannounce&tr=http%3a%2f%2ftracker.kamigami.org%3a2710%2fannounce&tr=http%3a%2f%2fshare.camoe.cn%3a8080%2fannounce&tr=http%3a%2f%2fopentracker.acgnx.se%2fannounce&tr=http%3a%2f%2fanidex.moe%3a6969%2fannounce&tr=http%3a%2f%2ft.acg.rip%3a6699%2fannounce&tr=https%3a%2f%2ftr.bangumi.moe%3a9696%2fannounce&tr=udp%3a%2f%2ftr.bangumi.moe%3a6969%2fannounce&tr=http%3a%2f%2fopen.acgtracker.com%3a1096%2fannounce&tr=udp%3a%2f%2ftracker.opentrackr.org%3a1337%2fannounce"
+    qbt_client.torrents_add(urls=u, save_path="F:\\test", is_paused=False)
+    #read file
+    base_path = "F:\\test\\"
+    with open("F:\\test\\anime_info.json", "r") as f:
+        #gen path with titile
+        data = json.load(f)
+        for i in data["anime"]:
+            path = base_path + i["title"]
+            os.makedirs(path, exist_ok=True)
+            #download file
+            for j in i["files"]:
+                url = j["url"]
+                r = requests.get(url)
+        data = json.load(f)
+    print(data)
+
+# display qBittorrent info
+    print(f"qBittorrent: {qbt_client.app.version}")
+    print(f"qBittorrent Web API: {qbt_client.app.web_api_version}")
+    for k, v in qbt_client.app.build_info.items():
+        print(f"{k}: {v}")
+
+    # retrieve and show all torrents
+    for torrent in qbt_client.torrents_info():
+        print(f"{torrent.hash[-6:]}: {torrent.name} ({torrent.state})")
+
+    # stop all torrents
+    qbt_client.torrents.stop.all()
