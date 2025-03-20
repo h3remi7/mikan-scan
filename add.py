@@ -2,6 +2,7 @@ import qbittorrentapi
 import json
 import os
 from pathlib import Path
+from prompt_toolkit import prompt
 # instantiate a Client using the appropriate WebUI configuration
 conn_info = dict(
     host="127.0.0.1",
@@ -34,13 +35,23 @@ with qbittorrentapi.Client(**conn_info) as qbt_client:
         #gen path with titile
         data = json.load(f)
         path = Path(base_path) / data["name"]
-        path.mkdir(parents=True, exist_ok=True)
         #download file
-        for j in data["sub_groups"]:
-            os.makedirs(path / j["group_name"], exist_ok=True)
-            for k in j["episodes"]:
-                url = k["magnet_link"]
-                qbt_client.torrents_add(urls=url, save_path=path / j["group_name"])
+        all_sub_groups = []
+        for i, j in enumerate(data["sub_groups"]):
+            item = {
+                "index": i,
+                "group_name": j["group_name"],
+                "episodes": j["episodes"]
+            }
+            all_sub_groups.append(item)
+        msg = "请选择字幕组:\n"
+        for i, j in enumerate(all_sub_groups):
+            msg += f"{i}: {j['group_name']}\n"
+        answer = prompt(msg)
+        selected_sub_group = all_sub_groups[int(answer)]
+        for k in selected_sub_group["episodes"]:
+            url = k["magnet_link"]
+            qbt_client.torrents_add(urls=url, save_path=path / selected_sub_group["group_name"])
 
 # display qBittorrent info
     # retrieve and show all torrents
